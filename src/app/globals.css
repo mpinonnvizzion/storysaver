@@ -1,26 +1,83 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fafaf9;
+  --foreground: #1c1917;
+  --surface: #ffffff;
+  --surface-raised: #f5f5f4;
+  --border: #e7e5e4;
+}
+
+.dark {
+  --background: #0c0a09;
+  --foreground: #fafaf9;
+  --surface: #17140f;
+  --surface-raised: #1f1a14;
+  --border: #2a241c;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-display: var(--font-space-grotesk);
+  --font-sans: var(--font-manrope);
+
+  /* Warm amber/orange accent scale */
+  --color-accent-50: #fff8ec;
+  --color-accent-100: #ffecc7;
+  --color-accent-200: #ffd685;
+  --color-accent-300: #ffbb4d;
+  --color-accent-400: #ff9d2e;
+  --color-accent-500: #f9740c;
+  --color-accent-600: #e8590a;
+  --color-accent-700: #c1400d;
+  --color-accent-800: #99320f;
+  --color-accent-900: #7c2b10;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .accent-glow {
+    box-shadow: 0 0 0 1px var(--color-accent-500),
+      0 0 24px -4px color-mix(in oklab, var(--color-accent-500) 60%, transparent);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-raised) 25%,
+    var(--color-border) 37%,
+    var(--color-surface-raised) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease infinite;
 }
