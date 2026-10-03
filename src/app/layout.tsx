@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Space_Grotesk, Manrope } from "next/font/google";
 import Link from "next/link";
 import Script from "next/script";
 import Footer from "@/components/Footer";
+import GoogleAnalytics from "@/components/GoogleAnalytics";
 import ThemeToggle from "@/components/ThemeToggle";
 import { buildMetadata, SITE_URL } from "@/lib/metadata";
 import "./globals.css";
@@ -53,6 +55,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         </header>
         <div className="flex-1 flex flex-col">{children}</div>
         <Footer />
+        <Suspense fallback={null}>
+          <GoogleAnalytics />
+        </Suspense>
       </body>
     </html>
   );

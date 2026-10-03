@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Download, Link2, Sparkles } from "lucide-react";
 import SmartInputBar from "@/components/SmartInputBar";
 import AdSlot from "@/components/AdSlot";
-import { buildMetadata, SITE_URL } from "@/lib/metadata";
+import { buildMetadata } from "@/lib/metadata";
+import { buildFaqSchema, buildOrganizationSchema, buildWebApplicationSchema } from "@/lib/schema";
 
 export const metadata: Metadata = buildMetadata({
   title: "StorySnag — Download Instagram Stories, Reels & Profile Pictures",
@@ -54,19 +55,15 @@ export default function HomePage() {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{
-          __html: JSON.stringify({
-            "@context": "https://schema.org",
-            "@type": "WebApplication",
-            name: "StorySnag",
-            url: SITE_URL,
-            applicationCategory: "UtilitiesApplication",
-            operatingSystem: "Any",
-            offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-            description:
-              "Download Instagram stories, reels, and HD profile pictures instantly. No login required.",
-          }),
-        }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(buildWebApplicationSchema()) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(buildOrganizationSchema()) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(buildFaqSchema(FAQS)) }}
       />
 
       <section className="flex flex-1 flex-col items-center px-4 pb-16 pt-12 text-center sm:pt-20">
@@ -110,7 +107,7 @@ export default function HomePage() {
             {FAQS.map((faq) => (
               <details key={faq.q} className="group py-4">
                 <summary className="flex cursor-pointer list-none items-center justify-between font-medium text-foreground">
-                  {faq.q}
+                  <h3 className="text-left">{faq.q}</h3>
                   <span className="ml-4 shrink-0 text-foreground/40 transition-transform group-open:rotate-45">+</span>
                 </summary>
                 <p className="mt-2 text-sm text-foreground/60">{faq.a}</p>
