@@ -6,6 +6,7 @@ import Script from "next/script";
 import Footer from "@/components/Footer";
 import GoogleAnalytics from "@/components/GoogleAnalytics";
 import ThemeToggle from "@/components/ThemeToggle";
+import { ADSENSE_CLIENT_ID } from "@/lib/adsense";
 import { buildMetadata, SITE_URL } from "@/lib/metadata";
 import "./globals.css";
 
@@ -47,6 +48,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <Script id="theme-init" strategy="beforeInteractive">
           {THEME_INIT_SCRIPT}
         </Script>
+        <Script
+          async
+          src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT_ID}`}
+          crossOrigin="anonymous"
+          strategy="afterInteractive"
+        />
         <header className="flex items-center justify-between px-4 py-4 sm:px-6">
           <Link href="/" className="flex min-h-11 items-center font-display text-lg font-bold text-foreground">
             Story<span className="text-accent-400">Snag</span>

@@ -1,43 +1,57 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import { ADSENSE_CLIENT_ID } from "@/lib/adsense";
+
+declare global {
+  interface Window {
+    adsbygoogle?: unknown[];
+  }
+}
+
 type DesktopAdSize = "leaderboard" | "mediumRectangle";
 
-const DESKTOP_DIMENSIONS: Record<DesktopAdSize, { width: number; height: number; label: string }> = {
-  leaderboard: { width: 728, height: 90, label: "728 × 90" },
-  mediumRectangle: { width: 300, height: 250, label: "300 × 250" },
+const DESKTOP_MAX_WIDTH: Record<DesktopAdSize, number> = {
+  leaderboard: 728,
+  mediumRectangle: 300,
 };
-
-const MOBILE_DIMENSIONS = { width: 320, height: 50, label: "320 × 50" };
 
 interface AdSlotProps {
   id: string;
-  /** Size shown at sm breakpoint and above. Mobile always gets the 320×50 banner. */
+  /** Max width at sm breakpoint and above; the unit is responsive below that. */
   size?: DesktopAdSize;
   className?: string;
 }
 
 /**
- * Reserves ad layout space so nothing shifts once a network (AdSense, etc.)
- * is wired in via this element's data-ad-slot id. Intentionally empty for
- * now — no interstitials, no fake download buttons, ever.
+ * Renders a real AdSense auto ad unit (data-ad-slot intentionally omitted —
+ * Auto ads fills in-page placements like this one without a per-unit slot
+ * ID). Each mounted instance pushes itself to the adsbygoogle queue once,
+ * guarded by a ref so React Strict Mode's double-effect in dev doesn't
+ * double-push the same <ins> element.
  */
 export default function AdSlot({ id, size = "leaderboard", className = "" }: AdSlotProps) {
-  const desktop = DESKTOP_DIMENSIONS[size];
+  const pushed = useRef(false);
+
+  useEffect(() => {
+    if (pushed.current) return;
+    pushed.current = true;
+    try {
+      (window.adsbygoogle = window.adsbygoogle || []).push({});
+    } catch {
+      // adsbygoogle.js may not have loaded yet (blocked, offline, etc.) — fail silently.
+    }
+  }, []);
 
   return (
-    <div data-ad-slot={id} className={`flex w-full justify-center ${className}`}>
-      <div
-        className="hidden w-full items-center justify-center rounded-lg border border-dashed border-border/60 bg-surface-raised/40 text-xs text-foreground/30 sm:flex"
-        style={{ maxWidth: desktop.width, height: desktop.height }}
-        aria-hidden="true"
-      >
-        Ad {desktop.label}
-      </div>
-      <div
-        className="flex w-full items-center justify-center rounded-lg border border-dashed border-border/60 bg-surface-raised/40 text-xs text-foreground/30 sm:hidden"
-        style={{ maxWidth: MOBILE_DIMENSIONS.width, height: MOBILE_DIMENSIONS.height }}
-        aria-hidden="true"
-      >
-        Ad {MOBILE_DIMENSIONS.label}
-      </div>
+    <div data-ad-placement={id} className={`mx-auto w-full ${className}`} style={{ maxWidth: DESKTOP_MAX_WIDTH[size] }}>
+      <ins
+        className="adsbygoogle"
+        style={{ display: "block", minHeight: 50 }}
+        data-ad-client={ADSENSE_CLIENT_ID}
+        data-ad-format="auto"
+        data-full-width-responsive="true"
+      />
     </div>
   );
 }
