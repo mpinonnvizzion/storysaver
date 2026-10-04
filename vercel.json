@@ -3,6 +3,24 @@
   "functions": {
     "src/app/api/download/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/profile/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/stories/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/reels/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/media/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/profile/[username]/page.tsx": {
+      "maxDuration": 60
+    },
+    "src/app/download/page.tsx": {
+      "maxDuration": 60
     }
   }
 }

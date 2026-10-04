@@ -4,102 +4,94 @@ import { InstagramServiceError } from "@/types/instagram";
 import { CACHE_TTL, getOrSetCached } from "@/lib/cache";
 import { parseSmartInput } from "@/lib/input-parser";
 
-const BASE_URL = "https://api.hikerapi.com";
+const API_BASE = "https://api.apify.com/v2";
 
-// --- Raw HikerAPI response shapes (instagrapi-compatible) -----------------
-// HikerAPI mirrors the instagrapi JSON schema. Only the fields we use are
-// declared; the live payloads carry many more.
+// Apify actor slugs (store path form — converted to `username~actor-name`
+// for REST calls, since the API doesn't accept the slash).
+const STORIES_ACTOR = "goat255/instagram-stories-highlights-scraper";
+const PROFILE_ACTOR = "apify/instagram-profile-scraper";
+const POST_ACTOR = "apify/instagram-post-scraper";
 
-interface RawImageCandidate {
-  url: string;
-  width?: number;
-  height?: number;
-}
+const TERMINAL_RUN_STATUSES = new Set(["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"]);
 
-interface RawVideoVersion {
-  url: string;
-  width?: number;
-  height?: number;
-  type?: number;
-}
+// --- Raw Apify dataset item shapes -----------------------------------
+// Only the fields we use are declared; live payloads carry more.
 
-interface RawUser {
-  pk: number | string;
-  username: string;
-  full_name?: string;
-  biography?: string;
-  profile_pic_url?: string;
-  hd_profile_pic_url_info?: { url: string };
-  is_private?: boolean;
-  is_verified?: boolean;
-  follower_count?: number;
-  following_count?: number;
-  media_count?: number;
-}
-
-interface RawMediaItem {
-  pk: number | string;
+interface RawApifyStoryItem {
   id?: string;
-  code?: string;
-  media_type?: number; // 1 = photo, 2 = video, 8 = carousel
-  product_type?: string; // "clips" for reels
-  caption_text?: string | null;
-  taken_at?: number;
-  expiring_at?: number;
-  view_count?: number;
-  like_count?: number;
-  video_duration?: number;
-  image_versions2?: { candidates?: RawImageCandidate[] };
-  video_versions?: RawVideoVersion[];
-  carousel_media?: RawMediaItem[];
+  mediaType?: "video" | "image" | string;
+  takenAt?: number;
+  expiringAt?: number;
+  imageUrl?: string;
+  videoUrl?: string;
 }
 
-interface RawReelResponse {
-  reel?: {
-    items?: RawMediaItem[];
-  };
+interface RawApifyStoriesResult {
+  username: string;
+  status?: "ok" | "private" | "not_found" | "no_active_stories" | string;
+  isPrivate?: boolean;
+  storyCount?: number;
+  stories?: RawApifyStoryItem[];
 }
 
-interface RawClipsResponse {
-  items?: Array<{ media: RawMediaItem } | RawMediaItem>;
+interface RawApifyProfile {
+  username: string;
+  fullName?: string;
+  biography?: string;
+  profilePicUrl?: string;
+  profilePicUrlHD?: string;
+  private?: boolean;
+  verified?: boolean;
+  followersCount?: number;
+  followsCount?: number;
+  postsCount?: number;
 }
 
-interface RawMediaInfoResponse {
-  items?: RawMediaItem[];
+interface RawApifyPost {
+  id?: string;
+  shortCode?: string;
+  type?: "Image" | "Video" | "Sidecar" | string;
+  videoUrl?: string;
+  displayUrl?: string;
+  caption?: string | null;
+  likesCount?: number;
+  timestamp?: string;
+  ownerUsername?: string;
+  videoDuration?: number;
 }
 
-// --- helpers ----------------------------------------------------------
+interface ApifyRun {
+  id: string;
+  status: string;
+  defaultDatasetId: string;
+}
 
-function apiKey(): string {
-  const key = process.env.HIKERAPI_KEY;
-  if (!key) {
-    throw new InstagramServiceError(
-      "HIKERAPI_KEY is not configured on the server",
-      "UPSTREAM_ERROR",
-      500,
-    );
+// --- Apify REST helpers -------------------------------------------------
+
+function apifyToken(): string {
+  const token = process.env.APIFY_TOKEN;
+  if (!token) {
+    throw new InstagramServiceError("APIFY_TOKEN is not configured on the server", "UPSTREAM_ERROR", 500);
   }
-  return key;
+  return token;
 }
 
-async function hikerGet<T>(path: string, params: Record<string, string>): Promise<T> {
-  const url = new URL(path, BASE_URL);
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+function authHeaders(): HeadersInit {
+  return { "content-type": "application/json", authorization: `Bearer ${apifyToken()}` };
+}
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function apifyFetch<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, {
-      headers: { accept: "application/json", "x-access-key": apiKey() },
-      // Stories/reels change frequently; let our own cache layer own TTLs.
-      cache: "no-store",
-    });
+    res = await fetch(url, { ...init, headers: authHeaders(), cache: "no-store" });
   } catch {
     throw new InstagramServiceError("Could not reach Instagram data provider", "UPSTREAM_ERROR", 502);
   }
 
-  if (res.status === 404) {
-    throw new InstagramServiceError("Not found", "NOT_FOUND", 404);
-  }
   if (res.status === 429) {
     throw new InstagramServiceError("Upstream rate limit hit, try again shortly", "RATE_LIMITED", 429);
   }
@@ -110,121 +102,185 @@ async function hikerGet<T>(path: string, params: Record<string, string>): Promis
   return (await res.json()) as T;
 }
 
-function bestImageUrl(candidates?: RawImageCandidate[]): string {
-  return candidates?.[0]?.url ?? "";
+/**
+ * Starts an Apify actor run, polls until it leaves the RUNNING/READY state,
+ * and returns the resulting dataset items. Apify actor runs are async by
+ * nature (there's no synchronous "scrape and respond" endpoint for these
+ * actors), so every call pays a start + poll + fetch round trip.
+ */
+async function runApifyActor<T>(
+  actorSlug: string,
+  input: Record<string, unknown>,
+  { maxWaitMs = 30_000, pollIntervalMs = 2_000 }: { maxWaitMs?: number; pollIntervalMs?: number } = {},
+): Promise<T[]> {
+  const actorId = actorSlug.replace("/", "~");
+
+  const start = await apifyFetch<{ data: ApifyRun }>(`${API_BASE}/actors/${actorId}/runs`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+
+  let run = start.data;
+  const deadline = Date.now() + maxWaitMs;
+
+  while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+    if (Date.now() >= deadline) {
+      throw new InstagramServiceError("Instagram data provider timed out", "UPSTREAM_ERROR", 504);
+    }
+    await sleep(pollIntervalMs);
+    const poll = await apifyFetch<{ data: ApifyRun }>(`${API_BASE}/actors/${actorId}/runs/${run.id}`);
+    run = poll.data;
+  }
+
+  if (run.status !== "SUCCEEDED") {
+    throw new InstagramServiceError(`Instagram data provider run ${run.status.toLowerCase()}`, "UPSTREAM_ERROR", 502);
+  }
+
+  return apifyFetch<T[]>(`${API_BASE}/datasets/${run.defaultDatasetId}/items`);
 }
 
-function bestVideoUrl(versions?: RawVideoVersion[]): string {
-  return versions?.[0]?.url ?? "";
+// --- mapping helpers ------------------------------------------------------
+
+/** Handles both the stories actor's unix-seconds timestamps and the post actor's ISO strings. */
+function toIso(value?: number | string): string {
+  if (typeof value === "number") return new Date(value * 1000).toISOString();
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+  }
+  return new Date().toISOString();
 }
 
-function unixToIso(ts?: number): string {
-  return ts ? new Date(ts * 1000).toISOString() : new Date().toISOString();
+function normalizeInstagramUrl(raw: string): string {
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const url = new URL(withProtocol);
+    return `https://${url.hostname.replace(/^www\./i, "")}${url.pathname}`;
+  } catch {
+    return withProtocol;
+  }
 }
 
-function mediaTypeOf(raw: RawMediaItem): MediaType {
-  return raw.media_type === 2 ? "video" : "image";
-}
-
-function mapProfile(raw: RawUser): Profile {
+function mapApifyProfile(raw: RawApifyProfile): Profile {
   return {
     username: raw.username,
-    fullName: raw.full_name ?? "",
+    fullName: raw.fullName ?? "",
     bio: raw.biography ?? "",
-    profilePicUrl: raw.profile_pic_url ?? "",
-    profilePicHdUrl: raw.hd_profile_pic_url_info?.url ?? raw.profile_pic_url ?? "",
-    isPrivate: raw.is_private ?? false,
-    isVerified: raw.is_verified ?? false,
-    followerCount: raw.follower_count ?? 0,
-    followingCount: raw.following_count ?? 0,
-    postCount: raw.media_count ?? 0,
+    profilePicUrl: raw.profilePicUrl ?? "",
+    profilePicHdUrl: raw.profilePicUrlHD ?? raw.profilePicUrl ?? "",
+    isPrivate: raw.private ?? false,
+    isVerified: raw.verified ?? false,
+    followerCount: raw.followersCount ?? 0,
+    followingCount: raw.followsCount ?? 0,
+    postCount: raw.postsCount ?? 0,
   };
 }
 
-function mapStory(raw: RawMediaItem, username: string): Story {
-  const type = mediaTypeOf(raw);
+/** Throws for terminal statuses; "no_active_stories" is not an error — it just means an empty result. */
+function assertStoriesStatusOk(result: RawApifyStoriesResult): void {
+  switch (result.status) {
+    case "ok":
+    case "no_active_stories":
+    case undefined:
+      return;
+    case "private":
+      throw new InstagramServiceError("This account is private", "PRIVATE", 403);
+    case "not_found":
+      throw new InstagramServiceError("Instagram user not found", "NOT_FOUND", 404);
+    default:
+      throw new InstagramServiceError(`Unexpected upstream status: ${result.status}`, "UPSTREAM_ERROR", 502);
+  }
+}
+
+function mapApifyStory(raw: RawApifyStoryItem, username: string): Story {
+  const type: MediaType = raw.mediaType === "video" ? "video" : "image";
+  const mediaUrl = type === "video" ? raw.videoUrl ?? raw.imageUrl ?? "" : raw.imageUrl ?? "";
   return {
-    id: String(raw.pk ?? raw.id),
+    id: String(raw.id ?? `${username}-${raw.takenAt ?? Date.now()}`),
     username,
     type,
-    thumbnailUrl: bestImageUrl(raw.image_versions2?.candidates),
-    mediaUrl: type === "video" ? bestVideoUrl(raw.video_versions) : bestImageUrl(raw.image_versions2?.candidates),
-    takenAt: unixToIso(raw.taken_at),
-    expiresAt: unixToIso(raw.expiring_at),
-    durationSeconds: raw.video_duration,
+    thumbnailUrl: raw.imageUrl ?? mediaUrl,
+    mediaUrl,
+    takenAt: toIso(raw.takenAt),
+    expiresAt: toIso(raw.expiringAt),
   };
 }
 
-function mapReel(raw: RawMediaItem, username: string): Reel {
+function mapApifyReel(raw: RawApifyPost, username: string): Reel {
   return {
-    id: String(raw.pk ?? raw.id ?? raw.code),
-    username,
-    thumbnailUrl: bestImageUrl(raw.image_versions2?.candidates),
-    videoUrl: bestVideoUrl(raw.video_versions),
-    caption: raw.caption_text ?? "",
-    durationSeconds: raw.video_duration ?? 0,
-    viewCount: raw.view_count,
-    likeCount: raw.like_count,
-    takenAt: unixToIso(raw.taken_at),
+    id: String(raw.id ?? raw.shortCode ?? `${username}-${raw.timestamp ?? Date.now()}`),
+    username: raw.ownerUsername ?? username,
+    thumbnailUrl: raw.displayUrl ?? "",
+    videoUrl: raw.videoUrl ?? "",
+    caption: raw.caption ?? "",
+    durationSeconds: raw.videoDuration ?? 0,
+    likeCount: raw.likesCount,
+    takenAt: toIso(raw.timestamp),
   };
 }
 
-function mapMedia(raw: RawMediaItem, username: string, sourceKind: Media["sourceKind"]): Media {
-  // Carousels: surface the first slide. Good enough for MVP; a future
-  // pass could return all slides for a picker UI.
-  const primary = raw.media_type === 8 && raw.carousel_media?.length ? raw.carousel_media[0] : raw;
-  const type = mediaTypeOf(primary);
-
+function mapApifyMedia(raw: RawApifyPost, username: string, sourceKind: Media["sourceKind"]): Media {
+  const type: MediaType = raw.type === "Video" ? "video" : "image";
   return {
-    id: String(raw.pk ?? raw.id ?? raw.code),
+    id: String(raw.id ?? raw.shortCode ?? `${username}-media`),
     type,
     sourceKind,
-    username,
-    thumbnailUrl: bestImageUrl(primary.image_versions2?.candidates),
-    mediaUrl: type === "video" ? bestVideoUrl(primary.video_versions) : bestImageUrl(primary.image_versions2?.candidates),
-    caption: raw.caption_text ?? undefined,
-    durationSeconds: primary.video_duration,
-    takenAt: raw.taken_at ? unixToIso(raw.taken_at) : undefined,
+    username: raw.ownerUsername ?? username,
+    thumbnailUrl: raw.displayUrl ?? "",
+    mediaUrl: type === "video" ? raw.videoUrl ?? raw.displayUrl ?? "" : raw.displayUrl ?? "",
+    caption: raw.caption ?? undefined,
+    durationSeconds: raw.videoDuration,
+    takenAt: toIso(raw.timestamp),
   };
 }
 
 // --- service ------------------------------------------------------------
 
-class HikerApiInstagramService implements InstagramService {
+class ApifyInstagramService implements InstagramService {
   async getProfile(username: string): Promise<Profile> {
     return getOrSetCached(`profile:${username}`, CACHE_TTL.PROFILE, async () => {
-      const data = await hikerGet<{ user: RawUser }>("/v2/user/by/username", { username });
-      return mapProfile(data.user);
+      const items = await runApifyActor<RawApifyProfile>(PROFILE_ACTOR, { usernames: [username] });
+      const raw = items[0];
+      if (!raw) {
+        throw new InstagramServiceError("Instagram user not found", "NOT_FOUND", 404);
+      }
+      return mapApifyProfile(raw);
     });
   }
 
   async getStories(username: string): Promise<Story[]> {
     return getOrSetCached(`stories:${username}`, CACHE_TTL.STORIES, async () => {
-      const data = await hikerGet<RawReelResponse>("/v2/user/stories/by/username", { username });
-      const items = data.reel?.items ?? [];
-      return items.map((item) => mapStory(item, username));
+      const items = await runApifyActor<RawApifyStoriesResult>(
+        STORIES_ACTOR,
+        { usernames: [username], includeStories: true, includeHighlights: false, expandHighlightItems: false },
+        { maxWaitMs: 30_000, pollIntervalMs: 2_000 },
+      );
+      const result = items[0];
+      if (!result) {
+        throw new InstagramServiceError("Instagram user not found", "NOT_FOUND", 404);
+      }
+      assertStoriesStatusOk(result);
+      return (result.stories ?? []).map((story) => mapApifyStory(story, username));
     });
   }
 
   async getReels(username: string): Promise<Reel[]> {
     return getOrSetCached(`reels:${username}`, CACHE_TTL.REELS, async () => {
-      const userId = await this.resolveUserId(username);
-      const data = await hikerGet<RawClipsResponse>("/v2/user/clips", { user_id: userId });
-      const items = (data.items ?? []).map((entry) => ("media" in entry ? entry.media : entry));
-      return items.map((item) => mapReel(item, username));
+      const items = await runApifyActor<RawApifyPost>(POST_ACTOR, { username: [username], resultsLimit: 12 });
+      return items.filter((item) => item.type === "Video").map((item) => mapApifyReel(item, username));
     });
   }
 
   async getMediaByUrl(url: string): Promise<Media> {
     return getOrSetCached(`media:${url}`, CACHE_TTL.MEDIA, async () => {
-      const data = await hikerGet<RawMediaInfoResponse>("/v2/media/info/by/url", { url });
-      const raw = data.items?.[0];
+      const normalized = normalizeInstagramUrl(url);
+      const items = await runApifyActor<RawApifyPost>(POST_ACTOR, { username: [normalized], resultsLimit: 1 });
+      const raw = items[0];
       if (!raw) {
         throw new InstagramServiceError("Media not found", "NOT_FOUND", 404);
       }
-      const sourceKind: Media["sourceKind"] = raw.product_type === "clips" ? "reel" : "post";
-      const username = (raw as RawMediaItem & { user?: { username?: string } }).user?.username ?? "";
-      return mapMedia(raw, username, sourceKind);
+      const sourceKind: Media["sourceKind"] = normalized.includes("/reel/") ? "reel" : "post";
+      return mapApifyMedia(raw, raw.ownerUsername ?? "", sourceKind);
     });
   }
 
@@ -232,17 +288,9 @@ class HikerApiInstagramService implements InstagramService {
     const profile = await this.getProfile(username);
     return profile.profilePicHdUrl;
   }
-
-  /** /v2/user/clips needs a numeric user id rather than a username. */
-  private async resolveUserId(username: string): Promise<string> {
-    return getOrSetCached(`userid:${username}`, CACHE_TTL.PROFILE, async () => {
-      const res = await hikerGet<{ user: RawUser }>("/v2/user/by/username", { username });
-      return String(res.user.pk);
-    });
-  }
 }
 
-export const instagramService: InstagramService = new HikerApiInstagramService();
+export const instagramService: InstagramService = new ApifyInstagramService();
 
 /**
  * Resolves a raw story/reel/post URL (or the story's username+id pair) to a

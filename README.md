@@ -9,13 +9,13 @@ Full product spec: [`storysnag-project-brief.md`](./storysnag-project-brief.md).
 - Next.js 16 (App Router) + TypeScript
 - Tailwind CSS v4
 - Framer Motion, Lucide React
-- Instagram data via [HikerAPI](https://hikerapi.com)
+- Instagram data via [Apify](https://console.apify.com) actors
 
 ## Getting started
 
 ```bash
 npm install
-cp .env.example .env.local   # then fill in HIKERAPI_KEY
+cp .env.example .env.local   # then fill in APIFY_TOKEN
 npm run dev
 ```
 
@@ -25,7 +25,7 @@ Open http://localhost:3000.
 
 | Variable               | Required | Notes                                            |
 | ----------------------- | -------- | ------------------------------------------------- |
-| `HIKERAPI_KEY`          | yes      | Server-only. Never expose via `NEXT_PUBLIC_*`.     |
+| `APIFY_TOKEN`           | yes      | Server-only. Never expose via `NEXT_PUBLIC_*`.     |
 | `NEXT_PUBLIC_SITE_URL`  | yes      | Used for metadata/Open Graph URLs.                 |
 
 ## Structure
