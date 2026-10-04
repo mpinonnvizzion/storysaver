@@ -3,30 +3,41 @@
 import { useState } from "react";
 import StoriesGrid from "./StoriesGrid";
 import ReelsGrid from "./ReelsGrid";
+import HighlightsGrid from "./HighlightsGrid";
 import AdSlot from "./AdSlot";
-import type { Reel, Story } from "@/types/instagram";
+import type { Highlight, Reel, Story } from "@/types/instagram";
 
 interface ProfileTabsProps {
   stories: Story[];
   reels: Reel[];
+  highlights: Highlight[];
 }
 
-export default function ProfileTabs({ stories, reels }: ProfileTabsProps) {
-  const [tab, setTab] = useState<"stories" | "reels">("stories");
+export default function ProfileTabs({ stories, reels, highlights }: ProfileTabsProps) {
+  const [tab, setTab] = useState<"stories" | "reels" | "highlights">("stories");
 
   return (
     <div>
       <div className="flex gap-2 border-b border-border">
         <TabButton active={tab === "stories"} onClick={() => setTab("stories")} label={`Stories (${stories.length})`} />
         <TabButton active={tab === "reels"} onClick={() => setTab("reels")} label={`Reels (${reels.length})`} />
+        <TabButton
+          active={tab === "highlights"}
+          onClick={() => setTab("highlights")}
+          label={`Highlights (${highlights.length})`}
+        />
       </div>
 
-      {/* Sits between the stories and reels views since the two share a tab slot. */}
+      {/* Sits between the tab bar and whichever grid is active. */}
       <div className="py-6">
         <AdSlot id="profile-between-stories-reels" size="mediumRectangle" />
       </div>
 
-      <div>{tab === "stories" ? <StoriesGrid stories={stories} /> : <ReelsGrid reels={reels} />}</div>
+      <div>
+        {tab === "stories" && <StoriesGrid stories={stories} />}
+        {tab === "reels" && <ReelsGrid reels={reels} />}
+        {tab === "highlights" && <HighlightsGrid highlights={highlights} />}
+      </div>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import "server-only";
-import type { InstagramService, Media, MediaType, Profile, Reel, Story } from "@/types/instagram";
+import type { Highlight, InstagramService, Media, MediaType, Profile, Reel, Story } from "@/types/instagram";
 import { InstagramServiceError } from "@/types/instagram";
 import { CACHE_TTL, getOrSetCached } from "@/lib/cache";
 import { parseSmartInput } from "@/lib/input-parser";
@@ -26,12 +26,24 @@ interface RawApifyStoryItem {
   videoUrl?: string;
 }
 
+interface RawApifyHighlight {
+  highlightId?: string;
+  title?: string;
+  // Observed to always be null from this actor even when `items` is fully
+  // populated — derive the count from items.length instead of trusting it.
+  mediaCount?: number | null;
+  coverImageUrl?: string;
+  items?: RawApifyStoryItem[];
+}
+
 interface RawApifyStoriesResult {
   username: string;
   status?: "ok" | "private" | "not_found" | "no_active_stories" | string;
   isPrivate?: boolean;
   storyCount?: number;
   stories?: RawApifyStoryItem[];
+  highlightCount?: number;
+  highlights?: RawApifyHighlight[];
 }
 
 interface RawApifyProfile {
@@ -206,6 +218,17 @@ function mapApifyStory(raw: RawApifyStoryItem, username: string): Story {
   };
 }
 
+function mapApifyHighlight(raw: RawApifyHighlight, username: string): Highlight {
+  const items = (raw.items ?? []).map((item) => mapApifyStory(item, username));
+  return {
+    highlightId: raw.highlightId ?? `${username}-highlight-${items[0]?.id ?? Date.now()}`,
+    title: raw.title ?? "",
+    mediaCount: raw.mediaCount ?? items.length,
+    coverImageUrl: raw.coverImageUrl ?? "",
+    items,
+  };
+}
+
 function mapApifyReel(raw: RawApifyPost, username: string): Reel {
   return {
     id: String(raw.id ?? raw.shortCode ?? `${username}-${raw.timestamp ?? Date.now()}`),
@@ -248,19 +271,29 @@ class ApifyInstagramService implements InstagramService {
     });
   }
 
-  async getStories(username: string): Promise<Story[]> {
+  async getStories(username: string): Promise<{ stories: Story[]; highlights: Highlight[] }> {
     return getOrSetCached(`stories:${username}`, CACHE_TTL.STORIES, async () => {
       const items = await runApifyActor<RawApifyStoriesResult>(
         STORIES_ACTOR,
-        { usernames: [username], includeStories: true, includeHighlights: false, expandHighlightItems: false },
-        { maxWaitMs: 30_000, pollIntervalMs: 2_000 },
+        { usernames: [username], includeStories: true, includeHighlights: true, expandHighlightItems: true },
+        // Expanding every highlight's items takes substantially longer than a
+        // plain stories fetch (observed 70s+ for an account with 8 highlights,
+        // one holding 63 items) — give it more room than the 30s used
+        // elsewhere, while staying under the route's 60s maxDuration.
+        { maxWaitMs: 50_000, pollIntervalMs: 2_000 },
       );
-      const result = items[0];
+      // The dataset also carries a trailing `{ recordType: "runSummary", ... }`
+      // entry that doesn't match this shape — find the real result rather
+      // than assuming it's items[0].
+      const result = items.find((item) => typeof item.username === "string");
       if (!result) {
         throw new InstagramServiceError("Instagram user not found", "NOT_FOUND", 404);
       }
       assertStoriesStatusOk(result);
-      return (result.stories ?? []).map((story) => mapApifyStory(story, username));
+      return {
+        stories: (result.stories ?? []).map((story) => mapApifyStory(story, username)),
+        highlights: (result.highlights ?? []).map((highlight) => mapApifyHighlight(highlight, username)),
+      };
     });
   }
 
@@ -301,7 +334,7 @@ export async function resolveDirectMedia(rawUrl: string): Promise<Media> {
   const parsed = parseSmartInput(rawUrl);
 
   if (parsed.kind === "story") {
-    const stories = await instagramService.getStories(parsed.username);
+    const { stories } = await instagramService.getStories(parsed.username);
     const story = parsed.storyId ? stories.find((s) => s.id === parsed.storyId) : stories[0];
     if (!story) {
       throw new InstagramServiceError("Story not found or expired", "NOT_FOUND", 404);

@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import ProfileHeader from "@/components/ProfileHeader";
 import ProfileTabs from "@/components/ProfileTabs";
 import SkeletonLoader from "@/components/SkeletonLoader";
-import type { Profile, Reel, Story } from "@/types/instagram";
+import type { Highlight, Profile, Reel, Story } from "@/types/instagram";
 
 type Status = "loading" | "ready" | "not_found" | "error";
 
@@ -25,6 +25,7 @@ export default function ProfileClient({ username }: ProfileClientProps) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [tabsLoading, setTabsLoading] = useState(true);
   const [stories, setStories] = useState<Story[]>([]);
+  const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [reels, setReels] = useState<Reel[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -68,7 +69,9 @@ export default function ProfileClient({ username }: ProfileClientProps) {
       }
 
       const [storiesResult, reelsResult] = await Promise.allSettled([
-        fetchJson<{ stories: Story[] }>(`/api/stories?username=${encodeURIComponent(username)}`),
+        fetchJson<{ stories: Story[]; highlights: Highlight[] }>(
+          `/api/stories?username=${encodeURIComponent(username)}`,
+        ),
         fetchJson<{ reels: Reel[] }>(`/api/reels?username=${encodeURIComponent(username)}`),
       ]);
       if (cancelled) return;
@@ -77,6 +80,7 @@ export default function ProfileClient({ username }: ProfileClientProps) {
       const reelsOk = reelsResult.status === "fulfilled" && reelsResult.value.ok;
 
       setStories(storiesOk && storiesResult.status === "fulfilled" ? storiesResult.value.data.stories ?? [] : []);
+      setHighlights(storiesOk && storiesResult.status === "fulfilled" ? storiesResult.value.data.highlights ?? [] : []);
       setReels(reelsOk && reelsResult.status === "fulfilled" ? reelsResult.value.data.reels ?? [] : []);
       setTabsLoading(false);
       if (!storiesOk && !reelsOk) {
@@ -122,7 +126,7 @@ export default function ProfileClient({ username }: ProfileClientProps) {
                 ))}
               </div>
             ) : (
-              <ProfileTabs stories={stories} reels={reels} />
+              <ProfileTabs stories={stories} reels={reels} highlights={highlights} />
             )}
           </div>
           {loadError ? <p className="mt-6 text-sm text-red-300">{loadError}</p> : null}

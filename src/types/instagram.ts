@@ -48,9 +48,17 @@ export interface Media {
   takenAt?: string;
 }
 
+export interface Highlight {
+  highlightId: string;
+  title: string;
+  mediaCount: number;
+  coverImageUrl: string;
+  items: Story[]; // same shape as story items
+}
+
 export interface InstagramService {
   getProfile(username: string): Promise<Profile>;
-  getStories(username: string): Promise<Story[]>;
+  getStories(username: string): Promise<{ stories: Story[]; highlights: Highlight[] }>;
   getReels(username: string): Promise<Reel[]>;
   getMediaByUrl(url: string): Promise<Media>;
   getProfilePicHD(username: string): Promise<string>;

@@ -12,8 +12,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const stories = await instagramService.getStories(username);
-    return NextResponse.json({ stories });
+    const { stories, highlights } = await instagramService.getStories(username);
+    return NextResponse.json({ stories, highlights });
   } catch (error) {
     return errorResponse(error);
   }
