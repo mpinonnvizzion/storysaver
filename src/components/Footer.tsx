@@ -27,6 +27,9 @@ export default function Footer() {
             <Link href="/" className="-my-3 flex items-center py-3 hover:text-foreground">
               Home
             </Link>
+            <Link href="/about" className="-my-3 flex items-center py-3 hover:text-foreground">
+              About
+            </Link>
             <Link href="/terms" className="-my-3 flex items-center py-3 hover:text-foreground">
               Terms
             </Link>

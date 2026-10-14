@@ -11,6 +11,11 @@ export interface GuideStep {
   description: string;
 }
 
+export interface GuideTip {
+  title: string;
+  description: string;
+}
+
 export interface RelatedGuide {
   href: string;
   label: string;
@@ -20,7 +25,9 @@ export interface GuidePageProps {
   eyebrow: string;
   h1: string;
   intro: string;
+  introDetail?: string;
   steps: GuideStep[];
+  tips?: GuideTip[];
   faqs: FaqEntry[];
   ctaHeading: string;
   ctaSubheading: string;
@@ -31,7 +38,9 @@ export default function GuidePage({
   eyebrow,
   h1,
   intro,
+  introDetail,
   steps,
+  tips = [],
   faqs,
   ctaHeading,
   ctaSubheading,
@@ -57,6 +66,14 @@ export default function GuidePage({
           <SmartInputBar />
         </div>
       </section>
+
+      {introDetail && (
+        <section className="px-4 pb-4">
+          <div className="mx-auto max-w-2xl text-sm leading-relaxed text-foreground/60 sm:text-base">
+            <p>{introDetail}</p>
+          </div>
+        </section>
+      )}
 
       <section className="border-t border-border bg-surface/30 px-4 py-16">
         <div className="mx-auto max-w-4xl">
@@ -85,6 +102,22 @@ export default function GuidePage({
           </ol>
         </div>
       </section>
+
+      {tips.length > 0 && (
+        <section className="px-4 py-16">
+          <div className="mx-auto max-w-3xl">
+            <h2 className="text-center font-display text-2xl font-bold sm:text-3xl">Tips and tricks</h2>
+            <div className="mt-10 grid gap-6 sm:grid-cols-2">
+              {tips.map((tip) => (
+                <div key={tip.title} className="rounded-xl border border-border bg-surface-raised/40 p-5">
+                  <h3 className="font-display font-semibold text-foreground">{tip.title}</h3>
+                  <p className="mt-1.5 text-sm leading-relaxed text-foreground/60">{tip.description}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="px-4 py-12">
         <div className="mx-auto max-w-2xl">
@@ -123,7 +156,7 @@ export default function GuidePage({
         <section className="border-t border-border bg-surface/30 px-4 py-12">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-foreground/50">
-              More guides
+              Related tools
             </h2>
             <nav className="mt-4 flex flex-wrap justify-center gap-x-6 gap-y-2">
               {relatedGuides.map((guide) => (
